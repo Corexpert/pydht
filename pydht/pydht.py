@@ -141,6 +141,9 @@ class DHT(object):
             boot_peer = Peer(boot_host, boot_port, 0)
             self.iterative_find_nodes(self.peer.id, boot_peer=boot_peer)
                     
+    def get_known_peers(self):
+        return self.buckets.nearest_nodes(self.peer.id, limit=alpha)
+    
     def __getitem__(self, key):
         hashed_key = hash_function(key)
         if hashed_key in self.data:
