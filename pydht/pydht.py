@@ -144,6 +144,12 @@ class DHT(object):
     def get_known_peers(self):
         return self.buckets.nearest_nodes(self.peer.id, limit=alpha)
     
+    def close(self):
+        # Close socket
+        self.server.socket.close()
+        # Shutdown socket server
+        self.server.shutdown()
+        
     def __getitem__(self, key):
         hashed_key = hash_function(key)
         if hashed_key in self.data:
