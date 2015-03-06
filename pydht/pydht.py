@@ -49,7 +49,9 @@ class DHTRequestHandler(SocketServer.BaseRequestHandler):
         peer.pong(socket=self.server.socket, peer_id=self.server.dht.peer.id, lock=self.server.send_lock)
         
     def handle_pong(self, message):
-        pass
+        client_host, client_port = self.client_address
+        id = message["peer_id"]
+        peer = self.server.dht.buckets.last_pong_received[(client_host, client_port, id)] = time.time()
         
     def handle_find(self, message, find_value=False):
         key = message["id"]
@@ -104,6 +106,10 @@ class DHT(object):
         self.server_thread.daemon = True
         self.server_thread.start()
         self.bootstrap(unicode(boot_host), boot_port)
+        self.is_dead = False
+        self.checkalive_thread = threading.Thread(target=self.check_peers_alive)
+        self.checkalive_thread.daemon = True
+        self.checkalive_thread.start()
     
     def iterative_find_nodes(self, key, boot_peer=None):
         shortlist = Shortlist(k, key)
@@ -144,11 +150,33 @@ class DHT(object):
     def get_known_peers(self):
         return self.buckets.nearest_nodes(self.peer.id, limit=alpha)
     
+    def check_peers_alive(self):
+        while True:
+            if self.is_dead:
+                return
+            known_peers = self.buckets.nearest_nodes(self.peer.id, limit=alpha)
+            for p in known_peers:
+                if self.server.dht.buckets.last_pong_received.has_key((p.host, p.port, p.id)):
+                    # If this peer is dead
+                    current_t = time.time()
+                    last_peer_pong = self.server.dht.buckets.last_pong_received[(p.host, p.port, p.id)]
+                    if current_t - last_peer_pong > 15: # If more than 10 seconds since last pong received => DEAD
+                        self.server.dht.buckets.remove(p)
+                        continue
+                # Ping the still alive peers
+                p.ping(socket=self.server.socket, peer_id=self.peer.id)
+            
+            time.sleep(10) # Check alive peers every 10 seconds
+    
     def close(self):
+        if self.is_dead:
+            return
         # Close socket
         self.server.socket.close()
         # Shutdown socket server
         self.server.shutdown()
+        # Stop pinging
+        self.is_dead = True # Will stop loop for check alive thread
         
     def __getitem__(self, key):
         hashed_key = hash_function(key)
