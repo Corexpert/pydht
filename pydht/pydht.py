@@ -1,14 +1,35 @@
 import json
 import random
 import socket
-import SocketServer
 import threading
 import time
+
+try:
+    # For Python 2.* : SocketServer
+    import SocketServer
+except ImportError:
+    # For Python 3.* : SocketServer has been renamed to socketserver
+    import socketserver as SocketServer
 
 from .bucketset import BucketSet
 from .hashing import hash_function, random_id
 from .peer import Peer
 from .shortlist import Shortlist
+
+# Python3 support
+import sys
+if sys.version < '3':
+    # Python 2.*
+    def _unicode(x):
+        return unicode(x)
+    def _has_key(_dict, x):
+        return _dict.has_key(x)
+else:
+    # Python 3.*
+    def _unicode(x):
+        return x
+    def _has_key(_dict, x):
+        return x in _dict
 
 k = 20
 alpha = 3
@@ -19,7 +40,10 @@ class DHTRequestHandler(SocketServer.BaseRequestHandler):
 
     def handle(self):
         try:
-            message = json.loads(self.request[0].strip())
+            message_str = self.request[0].strip()
+            if sys.version >= '3':
+                message_str = message_str.decode('utf-8')
+            message = json.loads(message_str)
             message_type = message["message_type"]
             if message_type == "ping":
                 self.handle_ping(message)
@@ -35,7 +59,7 @@ class DHTRequestHandler(SocketServer.BaseRequestHandler):
                 self.handle_found_value(message)
             elif message_type == "store":
                 self.handle_store(message)
-        except KeyError, ValueError:
+        except (KeyError, ValueError) as e:
             pass
         client_host, client_port = self.client_address
         peer_id = message["peer_id"]
@@ -96,7 +120,7 @@ class DHT(object):
     def __init__(self, host, port, id=None, boot_host=None, boot_port=None):
         if not id:
             id = random_id()
-        self.peer = Peer(unicode(host), port, id)
+        self.peer = Peer(_unicode(host), port, id)
         self.data = {}
         self.buckets = BucketSet(k, id_bits, self.peer.id)
         self.rpc_ids = {} # should probably have a lock for this
@@ -105,7 +129,7 @@ class DHT(object):
         self.server_thread = threading.Thread(target=self.server.serve_forever)
         self.server_thread.daemon = True
         self.server_thread.start()
-        self.bootstrap(unicode(boot_host), boot_port)
+        self.bootstrap(_unicode(boot_host), boot_port)
         self.is_dead = False
         self.checkalive_thread = threading.Thread(target=self.check_peers_alive)
         self.checkalive_thread.daemon = True
@@ -156,7 +180,7 @@ class DHT(object):
                 return
             known_peers = self.buckets.nearest_nodes(self.peer.id, limit=alpha)
             for p in known_peers:
-                if self.server.dht.buckets.last_pong_received.has_key((p.host, p.port, p.id)):
+                if _has_key(self.server.dht.buckets.last_pong_received,(p.host, p.port, p.id)):
                     # If this peer is dead
                     current_t = time.time()
                     last_peer_pong = self.server.dht.buckets.last_pong_received[(p.host, p.port, p.id)]
@@ -171,15 +195,19 @@ class DHT(object):
     def close(self):
         if self.is_dead:
             return
-        # Close socket
-        self.server.socket.close()
         # Shutdown socket server
-        self.server.shutdown()
+        if sys.version < '3':
+            self.server.shutdown()
+        else:
+            # For some reason, shutdowning() the server in Python 3 blocks in the thread
+            # => the shutdown() method is called from the same thread as the serve_forever one,
+            # which makes no sense..
+            self.server.__shutdown_request = True
         # Stop pinging
         self.is_dead = True # Will stop loop for check alive thread
         
     def __getitem__(self, key):
-        hashed_key = hash_function(key)
+        hashed_key = hash_function(key.encode('utf-8'))
         if hashed_key in self.data:
             return self.data[hashed_key]
         result = self.iterative_find_value(hashed_key)
@@ -188,7 +216,7 @@ class DHT(object):
         raise KeyError
         
     def __setitem__(self, key, value):
-        hashed_key = hash_function(key)
+        hashed_key = hash_function(key.encode('utf-8'))
         nearest_nodes = self.iterative_find_nodes(hashed_key)
         if not nearest_nodes:
             self.data[hashed_key] = value

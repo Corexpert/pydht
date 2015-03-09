@@ -1,5 +1,6 @@
 import hashlib
 import json
+import sys
 
 from .hashing import hash_function
 
@@ -20,6 +21,8 @@ class Peer(object):
     def _sendmessage(self, message, sock=None, peer_id=None, lock=None):
         message["peer_id"] = peer_id # more like sender_id
         encoded = json.dumps(message)
+        if not sys.version < '3': # For Python3
+            encoded = bytes(encoded, 'UTF-8')
         if sock:
             if lock:
                 with lock:
